@@ -12,6 +12,14 @@ class RendererPatchTests(unittest.TestCase):
         self.assertIn('data.blur = false',patch)
         self.assertIn('renderWorkspace',patch)
 
+    def test_quickshell_tiles_remain_visible(self):
+        # Regression: explicitly skipping "quickshell" made the shell vanish.
+        source=(ROOT/'src/layer_visibility.hpp').read_text()
+        self.assertIn('name == "caelestia-drawers"', source)
+        self.assertIn('name == "caelestia-area-picker"', source)
+        self.assertNotIn('name == "quickshell"', source)
+        self.assertIn("hyprtasking_skip_tile_layer", (ROOT/'patches/hyprtasking-caelestia-overview.patch').read_text())
+
     def test_rebuild_carries_patches(self):
         s=(ROOT/'scripts/kagami-hyprtasking-build').read_text()
         self.assertIn('src/render.cpp',s)

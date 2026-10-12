@@ -21,8 +21,24 @@ index 6260907..835dd2d 100644
  
  template<typename... Args>
  inline void fail_exit(const std::format_string<Args...>& fmt, Args... args) {
+diff --git a/src/layer_visibility.hpp b/src/layer_visibility.hpp
+new file mode 100644
+index 0000000..aa3e379
+--- /dev/null
++++ b/src/layer_visibility.hpp
+@@ -0,0 +1,10 @@
++#pragma once
++
++#include <string_view>
++
++// Only global full-screen effect surfaces are omitted from workspace tiles.
++// Ordinary QuickShell panels, wallpaper, keyboard handles and Loom controls
++// remain visible on each desktop preview.
++inline bool hyprtasking_skip_tile_layer(std::string_view name) {
++    return name == "caelestia-drawers" || name == "caelestia-area-picker";
++}
 diff --git a/src/main.cpp b/src/main.cpp
-index 61152c2..44b0347 100644
+index 61152c2..09bb4bb 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -6,6 +6,7 @@
@@ -33,7 +49,15 @@ index 61152c2..44b0347 100644
  #include <hyprland/src/devices/IKeyboard.hpp>
  #include <hyprland/src/output/Monitor.hpp>
  #include <hyprland/src/macros.hpp>
-@@ -267,6 +268,46 @@ DISPATCHER(killhovered) {
+@@ -29,6 +30,7 @@
+ #include "config.hpp"
+ #include "config/ConfigManager.hpp"
+ #include "globals.hpp"
++#include "layer_visibility.hpp"
+ #include "layout/grid.hpp"
+ #include "overview.hpp"
+ #include "types.hpp"
+@@ -267,6 +269,36 @@ DISPATCHER(killhovered) {
      return wrap(closeWindow(hovered_window));
  }
  
@@ -46,11 +70,10 @@ index 61152c2..44b0347 100644
 +    bool lockscreen
 +);
 +
-+// Global shell layers do not belong to individual workspaces. Rendering them
-+// nine times at different scales recreates a full-monitor blur for each tile,
-+// producing giant blurry boxes and unnecessary GPU work. Skip only while the
-+// compositor draws Hyprtasking's miniature workspace tiles; keep the normal
-+// desktop and its blur/panels untouched. Wallpaper layers still draw normally.
++// Keep the user-facing QuickShell panels in every workspace preview, while
++// filtering only the full-monitor blur/selection overlays that caused ghost
++// rectangles. Do NOT skip the generic "quickshell" namespace: that is the bar,
++// controls and other normal UI the user expects in all nine tiles.
 +static void hook_render_layer(
 +    void* thisptr,
 +    PHLLS pLayer,
@@ -59,18 +82,9 @@ index 61152c2..44b0347 100644
 +    bool popups,
 +    bool lockscreen
 +) {
-+    if (hyprtasking_rendering_workspace_tile && pLayer != nullptr) {
-+        const auto& name = pLayer->m_namespace;
-+        if (name == "caelestia-drawers"
-+            || name == "caelestia-area-picker"
-+            || name == "caelestia-background"
-+            || name == "caelestia-border-exclusion"
-+            || name == "quickshell"
-+            || name == "loom-agent-cursors"
-+            || name == "yoga-osk-toolbar"
-+            || name == "yoga-osk-handle")
-+            return;
-+    }
++    if (hyprtasking_rendering_workspace_tile && pLayer != nullptr
++        && hyprtasking_skip_tile_layer(pLayer->m_namespace))
++        return;
 +
 +    ((render_layer_t)(render_layer_hook->m_original))(
 +        thisptr, pLayer, pMonitor, time, popups, lockscreen
@@ -80,7 +94,7 @@ index 61152c2..44b0347 100644
  static void hook_render_workspace(
      void* thisptr,
      PHLMONITOR monitor,
-@@ -346,6 +387,13 @@ static void hook_render_texture(
+@@ -346,6 +378,13 @@ static void hook_render_texture(
      };
      data.damage = &full_damage;
      data.clipRegion = {};
@@ -94,7 +108,7 @@ index 61152c2..44b0347 100644
      const CBox saved_clip_box = render_data.clipBox;
      render_data.clipBox = CBox {};
  
-@@ -592,6 +640,17 @@ static void on_config_reloaded() {
+@@ -592,6 +631,17 @@ static void on_config_reloaded() {
  static void init_functions() {
      bool success = true;
  
@@ -129,3 +143,27 @@ index 86f4819..b0ab93d 100644
  
      if (workspace != nullptr) {
          Animation::Workspace::startAnimation(
+diff --git a/tests/tile_layer_visibility_test.cpp b/tests/tile_layer_visibility_test.cpp
+new file mode 100644
+index 0000000..3528346
+--- /dev/null
++++ b/tests/tile_layer_visibility_test.cpp
+@@ -0,0 +1,18 @@
++#include "../src/layer_visibility.hpp"
++#include <cassert>
++
++int main() {
++    // The regression: generic "quickshell" is the real bar and must survive.
++    assert(!hyprtasking_skip_tile_layer("quickshell"));
++    assert(!hyprtasking_skip_tile_layer("caelestia-background"));
++    assert(!hyprtasking_skip_tile_layer("loom-agent-cursors"));
++    assert(!hyprtasking_skip_tile_layer("yoga-osk-toolbar"));
++    assert(!hyprtasking_skip_tile_layer("yoga-osk-handle"));
++    assert(!hyprtasking_skip_tile_layer("mpvpaper"));
++    assert(!hyprtasking_skip_tile_layer("caelestia-border-exclusion"));
++
++    // Blur/compositor overlays are not per-workspace UI.
++    assert(hyprtasking_skip_tile_layer("caelestia-drawers"));
++    assert(hyprtasking_skip_tile_layer("caelestia-area-picker"));
++    return 0;
++}

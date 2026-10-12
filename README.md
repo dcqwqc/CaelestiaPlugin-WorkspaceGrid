@@ -9,7 +9,7 @@ Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 - **Nexus → Plugins → WorkspaceGrid → switch** enables or disables the actual Hyprland Hyprtasking module; the state persists across sessions.
 
 ## Rendering safety
-- Global QuickShell/drawers/area-picker layers no longer re-render inside individual workspace previews.
+- Normal QuickShell bars, controls, background and Loom layers remain visible in every workspace preview. Only the full-screen drawers/area-picker effect surfaces are excluded (to avoid blurred ghost rectangles).
 - Live workspace previews do not re-sample desktop-size blur buffers; normal desktop blur is unaffected.
 - This also avoids costly duplicate background-blur processing while panning.
 
@@ -38,3 +38,6 @@ The current Mirai installation has a separate local Hyprtasking overview compati
 
 ## 2026-10-12 visual-artifact remediation
 The renderer patch is packaged together with the pre-existing Caelestia overview compatibility patch and is installed by `install.sh`. Existing Hyprland plugin binaries are backed up before hot-replacing them; the new module successfully loaded in the running Mirai compositor. Automated screenshot capture via remote compositor screencopy was unavailable, so physical three-finger fluidity and the elimination of all graphical artifacts still need human acceptance testing.
+
+## 2026-10-12 panel visibility regression
+A too-broad filter excluded the generic `quickshell` namespace and hid the actual desktop bars when opening the grid. The renderer now tests an explicit minimal exclusion policy. Regression tests verify that generic QuickShell, background, Loom and keyboard layers render in all tiles, while global drawers/area-picker blur overlays are filtered.
