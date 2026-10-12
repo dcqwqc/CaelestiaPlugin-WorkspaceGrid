@@ -1,5 +1,5 @@
 diff --git a/src/input.cpp b/src/input.cpp
-index f832c8f..a62c05c 100644
+index f832c8f..487f574 100644
 --- a/src/input.cpp
 +++ b/src/input.cpp
 @@ -13,6 +13,7 @@
@@ -10,16 +10,49 @@ index f832c8f..a62c05c 100644
  #include "overview.hpp"
  
  bool HTManager::start_window_drag() {
-@@ -284,6 +285,8 @@ bool HTManager::on_mouse_axis(double delta) {
+@@ -284,6 +285,9 @@ bool HTManager::on_mouse_axis(double delta) {
  void HTManager::swipe_start() {
      swipe_state = HT_SWIPE_NONE;
      swipe_amt = 0.0;
 +    swipe_total_x = 0.0;
 +    swipe_total_y = 0.0;
++    swipe_open_axis = 0;
  }
  
  bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
-@@ -336,26 +339,29 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
+@@ -303,21 +307,24 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
+     const int OPEN_POSITIVE = HTConfig::value<Config::INTEGER>("gestures:open_positive");
+ 
+     bool res = false;
+-    char swipe_direction = 0;
+-    if (std::abs(e.delta.x) > std::abs(e.delta.y)) {
+-        swipe_direction = 'h';
+-    } else if (std::abs(e.delta.y) > std::abs(e.delta.x)) {
+-        swipe_direction = 'v';
+-    }
+ 
+     if (e.fingers == OPEN_FINGERS) {
++        // Hyprtasking and the separate touch-keyboard daemon observe the
++        // same raw touchpad swipe. Lock a direction from cumulative travel,
++        // rather than trusting the first small update's dominant axis.
++        if (swipe_open_axis == 0) {
++            swipe_total_x += e.delta.x;
++            swipe_total_y += e.delta.y;
++            swipe_open_axis = HTSwipeMotion::lock_axis(
++                swipe_total_x, swipe_total_y, 28.0, 1.65);
++        }
+         if (cursor_view->active || swipe_state == HT_SWIPE_OPEN)
+             res = true;
+ 
+         const float deltaY = OPEN_POSITIVE ? e.delta.y : -e.delta.y;
+ 
+         if (swipe_state != HT_SWIPE_OPEN) {
+-            if (swipe_direction != 'v' || cursor_view->closing) {
++            if (swipe_open_axis != 'v' || cursor_view->closing) {
+                 return res;
+             } else if (!cursor_view->active && deltaY <= 0) {
+                 cursor_view->show();
+@@ -336,26 +343,29 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
              cursor_view->layout->close_open_lerp(swipe_perc);
          }
      } else if (e.fingers == MOVE_FINGERS) {
@@ -64,7 +97,7 @@ index f832c8f..a62c05c 100644
      }
      return res;
  }
-@@ -377,8 +383,25 @@ bool HTManager::swipe_end() {
+@@ -377,8 +387,25 @@ bool HTManager::swipe_end() {
              break;
          }
          case HT_SWIPE_MOVE: {
@@ -92,12 +125,13 @@ index f832c8f..a62c05c 100644
              break;
          }
          case HT_SWIPE_NONE:
-@@ -387,5 +410,7 @@ bool HTManager::swipe_end() {
+@@ -387,5 +414,8 @@ bool HTManager::swipe_end() {
  
      swipe_state = HT_SWIPE_NONE;
      swipe_amt = 0.0;
 +    swipe_total_x = 0.0;
 +    swipe_total_y = 0.0;
++    swipe_open_axis = 0;
      return true;
  }
 diff --git a/src/layout/grid.cpp b/src/layout/grid.cpp
@@ -185,30 +219,43 @@ index 4ebca57..b722c82 100644
      // Returns the workspace id that the swipe should snap to
      virtual WORKSPACEID on_move_swipe_end();
 diff --git a/src/manager.hpp b/src/manager.hpp
-index 2bd37bf..87bf894 100644
+index 2bd37bf..637a79c 100644
 --- a/src/manager.hpp
 +++ b/src/manager.hpp
-@@ -43,6 +43,8 @@ class HTManager {
+@@ -43,6 +43,9 @@ class HTManager {
  
      swipe_state_t swipe_state;
      float swipe_amt;
 +    double swipe_total_x = 0.0;
 +    double swipe_total_y = 0.0;
++    char swipe_open_axis = 0; // h/v once four-finger direction is established
      std::unordered_set<uint32_t> jump_pressed_keys;
      void swipe_start();
      bool swipe_update(IPointer::SSwipeUpdateEvent e);
 diff --git a/src/swipe_motion.hpp b/src/swipe_motion.hpp
 new file mode 100644
-index 0000000..6f44d61
+index 0000000..d6eea1c
 --- /dev/null
 +++ b/src/swipe_motion.hpp
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,26 @@
 +#pragma once
 +
 +// Small, independent gesture primitives; kept unit-testable without Hyprland.
 +struct HTSwipeMotion {
 +    static bool outside_deadzone(double x, double y, double pixels) {
 +        return x * x + y * y >= pixels * pixels;
++    }
++
++    // Decide using accumulated distance. A small initial twitch must not
++    // open the grid during a four-finger horizontal keyboard gesture.
++    static char lock_axis(double x, double y, double minimum, double dominance) {
++        const double ax = x < 0 ? -x : x;
++        const double ay = y < 0 ? -y : y;
++        if (ax >= minimum && ax >= dominance * ay)
++            return 'h';
++        if (ay >= minimum && ay >= dominance * ax)
++            return 'v';
++        return 0;
 +    }
 +
 +    static double clamp_axis(double origin, double delta, double scale,
@@ -219,10 +266,10 @@ index 0000000..6f44d61
 +};
 diff --git a/tests/gesture_motion_test.cpp b/tests/gesture_motion_test.cpp
 new file mode 100644
-index 0000000..222f408
+index 0000000..deff51b
 --- /dev/null
 +++ b/tests/gesture_motion_test.cpp
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,34 @@
 +#include "../src/swipe_motion.hpp"
 +#include <cassert>
 +#include <cmath>
@@ -234,6 +281,15 @@ index 0000000..222f408
 +    assert(HTSwipeMotion::outside_deadzone(0, -300, 16));
 +    assert(!HTSwipeMotion::outside_deadzone(25, 25, 40));
 +    assert(HTSwipeMotion::outside_deadzone(40, 0, 40));
++
++    // A small vertical twitch followed by a strong horizontal swipe must
++    // stay undecided until it clearly becomes horizontal, not open the grid.
++    assert(HTSwipeMotion::lock_axis(0, 9, 28, 1.65) == 0);
++    assert(HTSwipeMotion::lock_axis(18, 11, 28, 1.65) == 0);
++    assert(HTSwipeMotion::lock_axis(40, 11, 28, 1.65) == 'h');
++    assert(HTSwipeMotion::lock_axis(-42, -9, 28, 1.65) == 'h');
++    assert(HTSwipeMotion::lock_axis(9, -35, 28, 1.65) == 'v');
++    assert(HTSwipeMotion::lock_axis(10, 11, 28, 1.65) == 0);
 +
 +    // The rendered offset depends on net displacement, not clamped steps.
 +    const double start = -500, scale = 4, min = -1000, max = 0;
