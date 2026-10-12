@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Rebuild the hyprtasking workspace-overview plugin against the installed
+# Hyprland.
+#
+# Same deal as yoga-hyprgrass-build, and for the same reason: a Hyprland plugin
+# is compiled against one exact compositor build and refuses to load against any
+# other, so this has to run again after every Hyprland update. hyprpm would
+# normally handle that but wants root for every operation, including its own
+# cache; building here needs no privileges, because the hyprland package already
+# ships the headers.
+#
+# hyprtasking keeps the same hyprpm.toml pin table hyprgrass does, mapping
+# Hyprland commits to the plugin commit known to build against them.
+set -Eeuo pipefail
+
+repo=https://github.com/raybbian/hyprtasking.git
+src=${XDG_CACHE_HOME:-$HOME/.cache}/kagami-hyprtasking
+dest=$HOME/.local/lib/hyprland
+plugin=$dest/libhyprtasking.so
+local_patch=$HOME/.local/share/kagami/patches/hyprtasking-caelestia-overview.patch
+gesture_patch=$HOME/.local/share/kagami/patches/hyprtasking-caelestia-gesture.patch
+
+die() { echo "kagami-hyprtasking-build: $1" >&2; exit 1; }
+
+command -v meson >/dev/null || die "meson is not installed"
+command -v ninja >/dev/null || die "ninja is not installed"
+pkg-config --exists hyprland || die "Hyprland headers are missing (install the hyprland package)"
+
+hl_commit=$(Hyprland --version 2>/dev/null | grep -oE 'commit [0-9a-f]{40}' | cut -d' ' -f2)
+[[ -n $hl_commit ]] || die "cannot determine the installed Hyprland commit"
+echo "Hyprland commit: $hl_commit ($(pkg-config --modversion hyprland))"
+
+if [[ -d $src/.git ]]; then
+  git -C "$src" fetch --quiet origin
+else
+  rm -rf "$src"
+  git clone --quiet "$repo" "$src"
+fi
+git -C "$src" checkout --quiet origin/main -- hyprpm.toml 2>/dev/null || \
+  git -C "$src" checkout --quiet origin/master -- hyprpm.toml
+
+# Last matching pin wins, so a re-pinned commit supersedes an earlier entry.
+pin=$(grep -F "\"$hl_commit\"" "$src/hyprpm.toml" | tail -1 |
+      grep -oE '"[0-9a-f]{40}"' | tail -1 | tr -d '"' || true)
+
+# Keep the Caelestia overview compatibility fix reproducible across plugin
+# rebuilds/Hyprland updates. Restore only the two files owned by this local
+# patch before switching plugin revisions, then re-apply after checkout.
+if [[ -f $local_patch ]]; then
+  git -C "$src" restore --source=HEAD -- src/main.cpp src/globals.hpp 2>/dev/null || true
+fi
+
+if [[ -f $gesture_patch ]]; then
+  git -C "$src" restore --source=HEAD -- src/input.cpp src/manager.hpp     src/layout/grid.cpp src/layout/grid.hpp     src/layout/layout_base.cpp src/layout/layout_base.hpp 2>/dev/null || true
+  rm -f "$src/src/swipe_motion.hpp" "$src/tests/gesture_motion_test.cpp"
+fi
+
+if [[ -n $pin ]]; then
+  echo "pinned hyprtasking commit: $pin"
+  git -C "$src" checkout --quiet "$pin"
+else
+  # The pin table trails Hyprland by a release or two. HEAD usually builds
+  # anyway; if it does not, that is the signal to wait for upstream rather than
+  # to start patching.
+  echo "no pin for this Hyprland commit; trying hyprtasking HEAD" >&2
+  git -C "$src" checkout --quiet origin/main 2>/dev/null || git -C "$src" checkout --quiet origin/master
+fi
+
+if [[ -f $local_patch ]]; then
+  if git -C "$src" apply --reverse --check "$local_patch" >/dev/null 2>&1; then
+    echo "Caelestia overview patch already present/upstream"
+  elif git -C "$src" apply --check "$local_patch" >/dev/null 2>&1; then
+    git -C "$src" apply "$local_patch"
+    echo "applied Caelestia overview patch"
+  else
+    die "Caelestia overview patch no longer applies cleanly: $local_patch"
+  fi
+fi
+
+if [[ -f $gesture_patch ]]; then
+  if git -C "$src" apply --reverse --check "$gesture_patch" >/dev/null 2>&1; then
+    echo "Gesture safety patch already present/upstream"
+  elif git -C "$src" apply --check "$gesture_patch" >/dev/null 2>&1; then
+    git -C "$src" apply "$gesture_patch"
+    echo "applied workspace-grid gesture patch"
+  else
+    die "Workspace-grid gesture patch no longer applies cleanly: $gesture_patch"
+  fi
+fi
+
+rm -rf "$src/build"
+meson setup "$src/build" "$src" --buildtype=release >/dev/null
+meson compile -C "$src/build" >/dev/null
+
+built=$src/build/libhyprtasking.so
+[[ -f $built ]] || die "build produced no plugin"
+
+mkdir -p "$dest"
+install -m 0755 "$built" "$plugin"
+echo "installed: $plugin"
+echo
+echo "Load it with:  hyprctl plugin load $plugin"
+echo "It is loaded on every start by hypr-user.lua."

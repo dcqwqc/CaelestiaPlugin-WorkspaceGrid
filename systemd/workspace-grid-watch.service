@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep Celestia Workspace Grid plugin in sync with Hyprland
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/caelestia/plugins/workspace-grid/scripts/workspace-grid-watch.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

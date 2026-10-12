@@ -1,0 +1,250 @@
+diff --git a/src/input.cpp b/src/input.cpp
+index f832c8f..a62c05c 100644
+--- a/src/input.cpp
++++ b/src/input.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include "config.hpp"
+ #include "manager.hpp"
++#include "swipe_motion.hpp"
+ #include "overview.hpp"
+ 
+ bool HTManager::start_window_drag() {
+@@ -284,6 +285,8 @@ bool HTManager::on_mouse_axis(double delta) {
+ void HTManager::swipe_start() {
+     swipe_state = HT_SWIPE_NONE;
+     swipe_amt = 0.0;
++    swipe_total_x = 0.0;
++    swipe_total_y = 0.0;
+ }
+ 
+ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
+@@ -336,26 +339,29 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
+             cursor_view->layout->close_open_lerp(swipe_perc);
+         }
+     } else if (e.fingers == MOVE_FINGERS) {
+-        if (swipe_state == HT_SWIPE_MOVE)
+-            res = true;
++        if (cursor_view->active)
++            return swipe_state == HT_SWIPE_MOVE;
+ 
++        // Use the *total* raw displacement, not whichever axis won the first
++        // touchpad event. Circular/hesitant movements are allowed to settle.
++        swipe_total_x += e.delta.x;
++        swipe_total_y += e.delta.y;
+         if (swipe_state != HT_SWIPE_MOVE) {
+-            if (cursor_view->active) {
+-                return res;
+-            } else {
+-                swipe_state = HT_SWIPE_MOVE;
+-                cursor_view->navigating = true;
++            if (!HTSwipeMotion::outside_deadzone(swipe_total_x, swipe_total_y, 16.0))
++                return false;
+ 
+-                cursor_view->layout->init_position();
+-                // need to schedule frames for monitor, otherwise the screen doesn't re-render
+-                g_pHyprRenderer->damageMonitor(cursor_monitor);
+-                cursor_monitor->scheduleFrame();
+-            }
++            swipe_state = HT_SWIPE_MOVE;
++            cursor_view->navigating = true;
++            cursor_view->layout->init_position();
++            cursor_view->layout->on_move_swipe_begin();
+         }
+ 
+-        if (swipe_state == HT_SWIPE_MOVE) {
+-            cursor_view->layout->on_move_swipe(e.delta);
+-        }
++        // Absolute displacement from the initial workspace means a circle
++        // returns to the origin, even when it crosses an outer grid boundary.
++        cursor_view->layout->on_move_swipe({swipe_total_x, swipe_total_y});
++        g_pHyprRenderer->damageMonitor(cursor_monitor);
++        cursor_monitor->scheduleFrame();
++        res = true;
+     }
+     return res;
+ }
+@@ -377,8 +383,25 @@ bool HTManager::swipe_end() {
+             break;
+         }
+         case HT_SWIPE_MOVE: {
+-            const WORKSPACEID ws_id = cursor_view->layout->on_move_swipe_end();
+-            cursor_view->move_id(ws_id, false);
++            // A circle, reversal or jitter ending close to its starting point
++            // must not commit a workspace change.
++            if (!HTSwipeMotion::outside_deadzone(swipe_total_x, swipe_total_y, 40.0)) {
++                cursor_view->navigating = false;
++                cursor_view->layout->init_position();
++                const PHLMONITOR monitor = cursor_view->get_monitor();
++                if (monitor != nullptr) {
++                    g_pHyprRenderer->damageMonitor(monitor);
++                    monitor->scheduleFrame();
++                }
++            } else {
++                const WORKSPACEID ws_id = cursor_view->layout->on_move_swipe_end();
++                if (ws_id != WORKSPACE_INVALID)
++                    cursor_view->move_id(ws_id, false);
++                else {
++                    cursor_view->navigating = false;
++                    cursor_view->layout->init_position();
++                }
++            }
+             break;
+         }
+         case HT_SWIPE_NONE:
+@@ -387,5 +410,7 @@ bool HTManager::swipe_end() {
+ 
+     swipe_state = HT_SWIPE_NONE;
+     swipe_amt = 0.0;
++    swipe_total_x = 0.0;
++    swipe_total_y = 0.0;
+     return true;
+ }
+diff --git a/src/layout/grid.cpp b/src/layout/grid.cpp
+index c0319ea..331dbcf 100644
+--- a/src/layout/grid.cpp
++++ b/src/layout/grid.cpp
+@@ -26,6 +26,7 @@
+ #include "../globals.hpp"
+ #include "../overview.hpp"
+ #include "../render.hpp"
++#include "../swipe_motion.hpp"
+ #include "../types.hpp"
+ #include "src/layout/target/Target.hpp"
+ 
+@@ -257,6 +258,11 @@ WORKSPACEID HTLayoutGrid::get_ws_id_in_direction(int x, int y, std::string& dire
+     return get_ws_id_from_xy(x, y);
+ }
+ 
++void HTLayoutGrid::on_move_swipe_begin() {
++    // Anchor the entire gesture so direction reversals and circles are path independent.
++    swipe_origin = offset->value();
++}
++
+ void HTLayoutGrid::on_move_swipe(Vector2D delta) {
+     const PHLMONITOR monitor = get_monitor();
+     if (monitor == nullptr)
+@@ -268,8 +274,10 @@ void HTLayoutGrid::on_move_swipe(Vector2D delta) {
+     const CBox min_ws = calculate_ws_box(0, 0, HT_VIEW_CLOSED);
+     const CBox max_ws = calculate_ws_box(COLS - 1, ROWS - 1, HT_VIEW_CLOSED);
+ 
+-    Vector2D new_offset = offset->value() + delta / MOVE_DISTANCE * max_ws.w;
+-    new_offset = new_offset.clamp(Vector2D {-max_ws.x, -max_ws.y}, Vector2D {-min_ws.x, -min_ws.y});
++    Vector2D new_offset = {
++        HTSwipeMotion::clamp_axis(swipe_origin.x, delta.x, max_ws.w / MOVE_DISTANCE, -max_ws.x, -min_ws.x),
++        HTSwipeMotion::clamp_axis(swipe_origin.y, delta.y, max_ws.w / MOVE_DISTANCE, -max_ws.y, -min_ws.y),
++    };
+ 
+     offset->resetAllCallbacks();
+     offset->setValueAndWarp(new_offset);
+diff --git a/src/layout/grid.hpp b/src/layout/grid.hpp
+index 76086ed..2dee1cd 100644
+--- a/src/layout/grid.hpp
++++ b/src/layout/grid.hpp
+@@ -17,6 +17,7 @@ class HTLayoutGrid: public HTLayoutBase {
+   private:
+     PHLANIMVAR<float> scale;
+     PHLANIMVAR<Vector2D> offset;
++    Vector2D swipe_origin = {0, 0};
+ 
+     // Survives workspace destruction so a slot stays sticky for an empty ws.
+     std::unordered_map<WORKSPACEID, HTGridSlot> ws_slot_cache;
+@@ -36,6 +37,7 @@ class HTLayoutGrid: public HTLayoutBase {
+     virtual void on_show(CallbackFun on_complete);
+     virtual void on_hide(CallbackFun on_complete);
+     virtual void on_move(WORKSPACEID old_id, WORKSPACEID new_id, CallbackFun on_complete);
++    virtual void on_move_swipe_begin();
+     virtual void on_move_swipe(Vector2D delta);
+     virtual WORKSPACEID on_move_swipe_end();
+ 
+diff --git a/src/layout/layout_base.cpp b/src/layout/layout_base.cpp
+index f599091..9eb7e3d 100644
+--- a/src/layout/layout_base.cpp
++++ b/src/layout/layout_base.cpp
+@@ -27,6 +27,10 @@ HTLayoutBase::HTLayoutBase(VIEWID new_view_id) : view_id(new_view_id) {
+     ;
+ }
+ 
++void HTLayoutBase::on_move_swipe_begin() {
++    ;
++}
++
+ void HTLayoutBase::on_move_swipe(Vector2D delta) {
+     ;
+ }
+diff --git a/src/layout/layout_base.hpp b/src/layout/layout_base.hpp
+index 4ebca57..b722c82 100644
+--- a/src/layout/layout_base.hpp
++++ b/src/layout/layout_base.hpp
+@@ -52,6 +52,7 @@ class HTLayoutBase {
+     virtual void on_hide(CallbackFun on_complete = nullptr) = 0;
+     virtual void
+     on_move(WORKSPACEID old_id, WORKSPACEID new_id, CallbackFun on_complete = nullptr) = 0;
++    virtual void on_move_swipe_begin();
+     virtual void on_move_swipe(Vector2D delta);
+     // Returns the workspace id that the swipe should snap to
+     virtual WORKSPACEID on_move_swipe_end();
+diff --git a/src/manager.hpp b/src/manager.hpp
+index 2bd37bf..87bf894 100644
+--- a/src/manager.hpp
++++ b/src/manager.hpp
+@@ -43,6 +43,8 @@ class HTManager {
+ 
+     swipe_state_t swipe_state;
+     float swipe_amt;
++    double swipe_total_x = 0.0;
++    double swipe_total_y = 0.0;
+     std::unordered_set<uint32_t> jump_pressed_keys;
+     void swipe_start();
+     bool swipe_update(IPointer::SSwipeUpdateEvent e);
+diff --git a/src/swipe_motion.hpp b/src/swipe_motion.hpp
+new file mode 100644
+index 0000000..6f44d61
+--- /dev/null
++++ b/src/swipe_motion.hpp
+@@ -0,0 +1,14 @@
++#pragma once
++
++// Small, independent gesture primitives; kept unit-testable without Hyprland.
++struct HTSwipeMotion {
++    static bool outside_deadzone(double x, double y, double pixels) {
++        return x * x + y * y >= pixels * pixels;
++    }
++
++    static double clamp_axis(double origin, double delta, double scale,
++                             double min, double max) {
++        const double v = origin + delta * scale;
++        return v < min ? min : (v > max ? max : v);
++    }
++};
+diff --git a/tests/gesture_motion_test.cpp b/tests/gesture_motion_test.cpp
+new file mode 100644
+index 0000000..222f408
+--- /dev/null
++++ b/tests/gesture_motion_test.cpp
+@@ -0,0 +1,25 @@
++#include "../src/swipe_motion.hpp"
++#include <cassert>
++#include <cmath>
++
++int main() {
++    assert(!HTSwipeMotion::outside_deadzone(1, 1, 16));
++    assert(!HTSwipeMotion::outside_deadzone(10, 10, 16));
++    assert(HTSwipeMotion::outside_deadzone(16, 0, 16));
++    assert(HTSwipeMotion::outside_deadzone(0, -300, 16));
++    assert(!HTSwipeMotion::outside_deadzone(25, 25, 40));
++    assert(HTSwipeMotion::outside_deadzone(40, 0, 40));
++
++    // The rendered offset depends on net displacement, not clamped steps.
++    const double start = -500, scale = 4, min = -1000, max = 0;
++    assert(HTSwipeMotion::clamp_axis(start, 200, scale, min, max) == 0);
++    assert(HTSwipeMotion::clamp_axis(start, 0, scale, min, max) == start);
++    assert(HTSwipeMotion::clamp_axis(start, -200, scale, min, max) == -1000);
++    assert(HTSwipeMotion::clamp_axis(start, 25, scale, min, max) == -400);
++
++    // At the edge, a clockwise or counter-clockwise loop must go home.
++    const double edge = 0;
++    assert(HTSwipeMotion::clamp_axis(edge, 0, scale, min, max) == edge);
++    assert(HTSwipeMotion::clamp_axis(edge, 300, scale, min, max) == edge);
++    return 0;
++}
