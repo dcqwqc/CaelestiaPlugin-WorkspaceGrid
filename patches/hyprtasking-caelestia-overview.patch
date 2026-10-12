@@ -1,0 +1,131 @@
+diff --git a/src/globals.hpp b/src/globals.hpp
+index 6260907..835dd2d 100644
+--- a/src/globals.hpp
++++ b/src/globals.hpp
+@@ -14,6 +14,7 @@ inline constexpr auto ERR = Hyprutils::CLI::LOG_ERR;
+ inline HANDLE PHANDLE = nullptr;
+ 
+ inline CFunctionHook* render_workspace_hook = nullptr;
++inline CFunctionHook* render_layer_hook = nullptr;
+ inline CFunctionHook* render_texture_hook = nullptr;
+ inline CFunctionHook* render_border_hook = nullptr;
+ inline CFunctionHook* render_border2_hook = nullptr;
+@@ -24,6 +25,10 @@ typedef uint32_t (*origIsSolitaryBlocked)(void*, bool);
+ inline void* render_window = nullptr;
+ 
+ inline std::unique_ptr<HTManager> ht_manager;
++// Only true while Hyprtasking invokes renderWorkspace for one miniature tile.
++// Global QuickShell layers and full-resolution blur must not be duplicated here.
++inline bool hyprtasking_rendering_workspace_tile = false;
++
+ 
+ template<typename... Args>
+ inline void fail_exit(const std::format_string<Args...>& fmt, Args... args) {
+diff --git a/src/main.cpp b/src/main.cpp
+index 61152c2..44b0347 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -6,6 +6,7 @@
+ #include <hyprland/src/SharedDefs.hpp>
+ #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+ #include <hyprland/src/desktop/DesktopTypes.hpp>
++#include <hyprland/src/desktop/view/LayerSurface.hpp>
+ #include <hyprland/src/devices/IKeyboard.hpp>
+ #include <hyprland/src/output/Monitor.hpp>
+ #include <hyprland/src/macros.hpp>
+@@ -267,6 +268,46 @@ DISPATCHER(killhovered) {
+     return wrap(closeWindow(hovered_window));
+ }
+ 
++typedef void (*render_layer_t)(
++    void* thisptr,
++    PHLLS pLayer,
++    PHLMONITOR pMonitor,
++    const Time::steady_tp& time,
++    bool popups,
++    bool lockscreen
++);
++
++// Global shell layers do not belong to individual workspaces. Rendering them
++// nine times at different scales recreates a full-monitor blur for each tile,
++// producing giant blurry boxes and unnecessary GPU work. Skip only while the
++// compositor draws Hyprtasking's miniature workspace tiles; keep the normal
++// desktop and its blur/panels untouched. Wallpaper layers still draw normally.
++static void hook_render_layer(
++    void* thisptr,
++    PHLLS pLayer,
++    PHLMONITOR pMonitor,
++    const Time::steady_tp& time,
++    bool popups,
++    bool lockscreen
++) {
++    if (hyprtasking_rendering_workspace_tile && pLayer != nullptr) {
++        const auto& name = pLayer->m_namespace;
++        if (name == "caelestia-drawers"
++            || name == "caelestia-area-picker"
++            || name == "caelestia-background"
++            || name == "caelestia-border-exclusion"
++            || name == "quickshell"
++            || name == "loom-agent-cursors"
++            || name == "yoga-osk-toolbar"
++            || name == "yoga-osk-handle")
++            return;
++    }
++
++    ((render_layer_t)(render_layer_hook->m_original))(
++        thisptr, pLayer, pMonitor, time, popups, lockscreen
++    );
++}
++
+ static void hook_render_workspace(
+     void* thisptr,
+     PHLMONITOR monitor,
+@@ -346,6 +387,13 @@ static void hook_render_texture(
+     };
+     data.damage = &full_damage;
+     data.clipRegion = {};
++    // The full-size blur framebuffer has screen-space coordinates, not the
++    // workspace tile's coordinates. Re-sampling it for every live preview is
++    // both incorrect (large soft ghost rectangles) and GPU-expensive.
++    // Preserve regular desktop blur; skip it only in the grid's preview tiles.
++    // The render pass can execute after renderWorkspaceAtBox returns; use the
++    // active scaled-render context here instead of its construction-time flag.
++    data.blur = false;
+     const CBox saved_clip_box = render_data.clipBox;
+     render_data.clipBox = CBox {};
+ 
+@@ -592,6 +640,17 @@ static void on_config_reloaded() {
+ static void init_functions() {
+     bool success = true;
+ 
++    static auto FNS_RL = HyprlandAPI::findFunctionsByName(
++        PHANDLE,
++        "_ZN6Render13IHyprRenderer11renderLayerEN9Hyprutils6Memory14CSharedPointerIN7Desktop4View13CLayerSurfaceEEENS3_IN7Monitor8CMonitorEEERKNSt6chrono10time_pointINSB_3_V212steady_clockENSB_8durationIlSt5ratioILl1ELl1000000000EEEEEEbb"
++    );
++    if (FNS_RL.empty())
++        fail_exit("No renderLayer!");
++    render_layer_hook =
++        HyprlandAPI::createFunctionHook(PHANDLE, FNS_RL[0].address, (void*)hook_render_layer);
++    Log::logger->log(LOG, "[Hyprtasking] Attempting hook {}", FNS_RL[0].signature);
++    success = render_layer_hook->hook() && success;
++
+     static auto FNS1 = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWorkspace");
+     if (FNS1.empty())
+         fail_exit("No renderWorkspace!");
+diff --git a/src/render.cpp b/src/render.cpp
+index 86f4819..b0ab93d 100644
+--- a/src/render.cpp
++++ b/src/render.cpp
+@@ -81,9 +81,12 @@ void render_workspace_at_box(
+         workspace->m_visible = true;
+     }
+ 
++    const bool previous_tile_render = hyprtasking_rendering_workspace_tile;
++    hyprtasking_rendering_workspace_tile = true;
+     ((render_workspace_t)(render_workspace_hook->m_original))(
+         g_pHyprRenderer.get(), monitor, workspace, time, render_box
+     );
++    hyprtasking_rendering_workspace_tile = previous_tile_render;
+ 
+     if (workspace != nullptr) {
+         Animation::Workspace::startAnimation(

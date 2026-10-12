@@ -47,7 +47,7 @@ pin=$(grep -F "\"$hl_commit\"" "$src/hyprpm.toml" | tail -1 |
 # rebuilds/Hyprland updates. Restore only the two files owned by this local
 # patch before switching plugin revisions, then re-apply after checkout.
 if [[ -f $local_patch ]]; then
-  git -C "$src" restore --source=HEAD -- src/main.cpp src/globals.hpp 2>/dev/null || true
+  git -C "$src" restore --source=HEAD -- src/main.cpp src/globals.hpp src/render.cpp 2>/dev/null || true
 fi
 
 if [[ -f $gesture_patch ]]; then

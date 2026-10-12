@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$HOME/.local/share/kagami/patches" "$HOME/.local/bin" "$HOME/.config/systemd/user"
+cp "$ROOT/patches/hyprtasking-caelestia-overview.patch" "$HOME/.local/share/kagami/patches/hyprtasking-caelestia-overview.patch"
 cp "$ROOT/patches/hyprtasking-gesture.patch" "$HOME/.local/share/kagami/patches/hyprtasking-caelestia-gesture.patch"
 install -m 0755 "$ROOT/scripts/kagami-hyprtasking-build" "$HOME/.local/bin/kagami-hyprtasking-build"
 python3 "$ROOT/scripts/integrate-hypr-user.py"

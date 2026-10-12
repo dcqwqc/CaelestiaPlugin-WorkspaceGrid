@@ -8,6 +8,11 @@ Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 - Super+Tab opens the overview; Super+Shift+Tab covers all monitors.
 - **Nexus → Plugins → WorkspaceGrid → switch** enables or disables the actual Hyprland Hyprtasking module; the state persists across sessions.
 
+## Rendering safety
+- Global QuickShell/drawers/area-picker layers no longer re-render inside individual workspace previews.
+- Live workspace previews do not re-sample desktop-size blur buffers; normal desktop blur is unaffected.
+- This also avoids costly duplicate background-blur processing while panning.
+
 ## Gesture safety
 - No drag before 16 units net displacement (avoids first-frame jitter).
 - Absolute pan from the gesture origin avoids boundary-clamping drift on loops and reversals.
@@ -30,3 +35,6 @@ The current Mirai installation has a separate local Hyprtasking overview compati
 - A clean upstream checkout accepted both persistent patches; standalone test passed again.
 - Native config OFF unloaded Hyprtasking; ON loaded it again; systemd watcher stayed active.
 - Actual human three-finger touchpad circular-motion acceptance still requires a physical gesture test.
+
+## 2026-10-12 visual-artifact remediation
+The renderer patch is packaged together with the pre-existing Caelestia overview compatibility patch and is installed by `install.sh`. Existing Hyprland plugin binaries are backed up before hot-replacing them; the new module successfully loaded in the running Mirai compositor. Automated screenshot capture via remote compositor screencopy was unavailable, so physical three-finger fluidity and the elimination of all graphical artifacts still need human acceptance testing.
