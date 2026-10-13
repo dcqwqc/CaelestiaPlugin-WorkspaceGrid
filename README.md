@@ -4,7 +4,7 @@ Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 
 ## Controls
 - Three-finger touchpad pan navigates the 3 × 3 workspace grid.
-- Four fingers open/close the workspace overview (configured in `hypr-user.lua`).
+- Four-finger swipes in any direction (touchpad or touchscreen) toggle the Yoga touch keyboard via the Gestures plugin; these swipes do not open/close the grid.
 - Super+Tab opens the overview; Super+Shift+Tab covers all monitors.
 - **Nexus → Plugins → WorkspaceGrid → switch** enables or disables the actual Hyprland Hyprtasking module; the state persists across sessions.
 
@@ -14,6 +14,7 @@ Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 - This also avoids costly duplicate background-blur processing while panning.
 
 ## Gesture safety
+- The installer sets `plugin.hyprtasking.gestures.open_fingers = 0` in `hypr-user.lua`, so the grid cannot compete for four-finger swipes. Super+Tab still opens the grid, and three fingers navigate inside it.
 - No drag before 16 units net displacement (avoids first-frame jitter).
 - Absolute pan from the gesture origin avoids boundary-clamping drift on loops and reversals.
 - Release with under 40 units net displacement returns to the original workspace without switching.
