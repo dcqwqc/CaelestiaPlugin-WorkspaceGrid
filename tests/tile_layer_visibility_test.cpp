@@ -11,8 +11,8 @@ int main() {
     assert(!hyprtasking_skip_tile_layer("mpvpaper"));
     assert(!hyprtasking_skip_tile_layer("caelestia-border-exclusion"));
 
-    // Blur/compositor overlays are not per-workspace UI.
-    assert(hyprtasking_skip_tile_layer("caelestia-drawers"));
+    // Drawers contain the real QuickShell panels. Only the area picker is excluded.
+    assert(!hyprtasking_skip_tile_layer("caelestia-drawers"));
     assert(hyprtasking_skip_tile_layer("caelestia-area-picker"));
     return 0;
 }

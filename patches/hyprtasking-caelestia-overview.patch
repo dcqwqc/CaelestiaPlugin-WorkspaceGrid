@@ -23,7 +23,7 @@ index 6260907..835dd2d 100644
  inline void fail_exit(const std::format_string<Args...>& fmt, Args... args) {
 diff --git a/src/layer_visibility.hpp b/src/layer_visibility.hpp
 new file mode 100644
-index 0000000..aa3e379
+index 0000000..f628e5c
 --- /dev/null
 +++ b/src/layer_visibility.hpp
 @@ -0,0 +1,10 @@
@@ -35,7 +35,7 @@ index 0000000..aa3e379
 +// Ordinary QuickShell panels, wallpaper, keyboard handles and Loom controls
 +// remain visible on each desktop preview.
 +inline bool hyprtasking_skip_tile_layer(std::string_view name) {
-+    return name == "caelestia-drawers" || name == "caelestia-area-picker";
++    return name == "caelestia-area-picker";
 +}
 diff --git a/src/main.cpp b/src/main.cpp
 index 61152c2..09bb4bb 100644
@@ -145,7 +145,7 @@ index 86f4819..b0ab93d 100644
          Animation::Workspace::startAnimation(
 diff --git a/tests/tile_layer_visibility_test.cpp b/tests/tile_layer_visibility_test.cpp
 new file mode 100644
-index 0000000..3528346
+index 0000000..ec9c523
 --- /dev/null
 +++ b/tests/tile_layer_visibility_test.cpp
 @@ -0,0 +1,18 @@
@@ -162,8 +162,8 @@ index 0000000..3528346
 +    assert(!hyprtasking_skip_tile_layer("mpvpaper"));
 +    assert(!hyprtasking_skip_tile_layer("caelestia-border-exclusion"));
 +
-+    // Blur/compositor overlays are not per-workspace UI.
-+    assert(hyprtasking_skip_tile_layer("caelestia-drawers"));
++    // Drawers contain the real QuickShell panels. Only the area picker is excluded.
++    assert(!hyprtasking_skip_tile_layer("caelestia-drawers"));
 +    assert(hyprtasking_skip_tile_layer("caelestia-area-picker"));
 +    return 0;
 +}
