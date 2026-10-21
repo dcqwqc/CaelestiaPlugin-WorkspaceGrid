@@ -3,7 +3,8 @@
 Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 
 ## Controls
-- Three-finger touchpad pan navigates the 3 × 3 workspace grid.
+- Three-finger hold + drag is reserved for moving a window (Hyprgrass on touchscreen); three-finger downward swipe closes a window.
+- Hyprtasking no longer intercepts three-finger swipes for workspace navigation. Open the grid with Super+Tab and navigate using its on-screen controls or pointer input.
 - Four-finger swipes in any direction (touchpad or touchscreen) toggle the Yoga touch keyboard via the Gestures plugin; these swipes do not open/close the grid.
 - Super+Tab opens the overview; Super+Shift+Tab covers all monitors.
 - **Nexus → Plugins → WorkspaceGrid → switch** enables or disables the actual Hyprland Hyprtasking module; the state persists across sessions.
@@ -14,7 +15,7 @@ Hyprtasking-based 3 × 3 canvas on Mirai, packaged as a Caelestia Nexus plugin.
 - This also avoids costly duplicate background-blur processing while panning.
 
 ## Gesture safety
-- The installer sets `plugin.hyprtasking.gestures.open_fingers = 0` in `hypr-user.lua`, so the grid cannot compete for four-finger swipes. Super+Tab still opens the grid, and three fingers navigate inside it.
+- The installer sets `plugin.hyprtasking.gestures.open_fingers = 0` and `move_fingers = 0` in `hypr-user.lua`, so the grid cannot compete for either four-finger keyboard swipes or three-finger window dragging. Super+Tab still opens the grid, but three-finger navigation is disabled to avoid stealing a window drag.
 - No drag before 16 units net displacement (avoids first-frame jitter).
 - Absolute pan from the gesture origin avoids boundary-clamping drift on loops and reversals.
 - Release with under 40 units net displacement returns to the original workspace without switching.
@@ -45,3 +46,19 @@ A too-broad filter excluded the generic `quickshell` namespace and hid the actua
 
 ## 2026-10-13 visual verification
 The full-screen caelestia-drawers layer also contains the actual QuickShell bars and sidebar. We now retain it while suppressing its expensive blur in scaled previews. A fresh Wayland screenshot of the 3×3 grid on Mirai confirmed top and side QuickShell controls on every workspace tile.
+
+## Three-finger input arbitration (2026-10-21)
+
+Hyprtasking 0.56-compatible builds default `gestures:move_fingers` to **3**
+independently of `gestures:open_fingers`. Disabling only `open_fingers`
+left three-finger workspace navigation active during Hyprgrass long-press
+window drags. This led to workspace-grid navigation taking over the drag.
+
+The installer now persists both values as zero. Setting zero is safe here:
+physical libinput swipe events have positive finger counts, so the plugin
+does not enter its navigation branch. Workspace overview itself, including
+Super+Tab and pointer controls, remains enabled. The gesture-only mode
+(`python3 scripts/integrate-hypr-user.py --gesture-only`) performs a
+backup-protected, idempotent adjustment without touching unrelated startup
+guards. The active value can be checked using
+`hyprctl getoption plugin:hyprtasking:gestures:move_fingers`.

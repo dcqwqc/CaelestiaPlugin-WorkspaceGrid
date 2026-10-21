@@ -2,6 +2,7 @@
 """Make built-in Hyprtasking autoload respect the real Workspace Grid switch."""
 from pathlib import Path
 import shutil
+import re
 import sys
 from datetime import datetime
 
@@ -20,6 +21,35 @@ if old_fingers in text:
     text = text.replace(old_fingers, new_fingers, 1)
     path.write_text(text)
     print(f"Reserved four-finger swipes for OSK; backup: {backup}")
+# The four-finger opening gesture is not Hyprtasking's only listener:
+# "move_fingers" defaults to 3 even when "open_fingers" is 0.
+# Reserve three fingers for Hyprgrass window hold/drag and close; the overview
+# remains available via SUPER+TAB and its pointer UI. Zero cannot match a
+# physical libinput swipe, so no compositor plugin rebuild is required.
+match = re.search(r'(hyprtasking\s*=\s*\{[\s\S]*?gestures\s*=\s*\{)([^{}]*)(\})', text)
+if not match or len(re.findall(r'hyprtasking\s*=\s*\{', text)) != 1:
+    raise SystemExit("Refusing ambiguous Hyprtasking gesture configuration")
+body = match.group(2)
+if not re.search(r'\bopen_fingers\s*=\s*0\b', body):
+    raise SystemExit("Expected Hyprtasking four-finger OSK reservation")
+if re.search(r'\bmove_fingers\s*=\s*0\b', body):
+    print("Hyprtasking three-finger navigation already disabled")
+else:
+    if re.search(r'\bmove_fingers\s*=', body):
+        new_body = re.sub(r'\bmove_fingers\s*=\s*\d+', 'move_fingers = 0', body, count=1)
+    else:
+        trimmed = body.rstrip()
+        new_body = trimmed + ('' if trimmed.endswith(',') else ',') + ' move_fingers = 0 '
+    backup = path.with_name(path.name + ".bak-gesture-priority-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    shutil.copy2(path, backup)
+    text = text[:match.start(2)] + new_body + text[match.end(2):]
+    path.write_text(text)
+    print(f"Reserved three fingers for window control; backup: {backup}")
+# Existing installations may have independently managed Hyprland startup
+# callbacks. --gesture-only changes exactly the competing gesture setting.
+if "--gesture-only" in sys.argv:
+    sys.exit(0)
+
 if "workspace_grid_autoload" in text:
     print("Workspace Grid startup guard already installed")
     sys.exit(0)
