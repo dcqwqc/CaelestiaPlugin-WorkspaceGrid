@@ -1,0 +1,10 @@
+{
+  "name": "WorkspaceGrid",
+  "version": "1.0.0",
+  "author": "dcqwqc",
+  "homepage": "https://github.com/dcqwqc/CaelestiaPlugin-WorkspaceGrid",
+  "icon": "grid_view",
+  "description": "3 × 3 spatial workspace canvas with smooth three-finger navigation, four-finger overview, and safe cancellation. Enable or disable the Hyprland engine from this switch.",
+  "entryPoints": [],
+  "requires": ">=2.1.0"
+}
